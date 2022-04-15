@@ -13,20 +13,23 @@ local finders = require("telescope.finders")
 local pickers = require("telescope.pickers")
 local entry_display = require("telescope.pickers.entry_display")
 local builtin = require("telescope.builtin")
-local themes = require("telescope.themes")
 local sorters = require("telescope.sorters")
 local conf = require("telescope.config").values
+-- local themes = require("telescope.themes")
+
 local Path = require("plenary.path")
 
+-- local F = vim.F
 local fn = vim.fn
 local cmd = vim.cmd
 
-CONFIG = ("%s/rualdi/rualdi.toml"):format(vim.env.XDG_DATA_HOME)
+local config = require("telescope._extensions.rualdi.config")
 
-local aliases = (function()
+local aliases =
+    (function()
     local dirty = {}
     local found = false
-    for line in io.lines(CONFIG) do
+    for line in io.lines(config.path) do
         if line:match("^%[") then
             found = false
         end
@@ -42,23 +45,26 @@ local aliases = (function()
         ::continue::
     end
 
-    local aliases = {}
-    for _, line in pairs(dirty) do
-        local pair = {}
-        if line ~= "" then
-            for token in line:gmatch("([^%s*=%s*]+)") do
-                local cleaned = token:gsub('"', "")
+    local ret =
+        vim.tbl_map(
+        function(line)
+            local pair = {}
+            if line ~= "" then
+                for token in line:gmatch("([^%s*=%s*]+)") do
+                    local cleaned = token:gsub('"', "")
 
-                if cleaned ~= "" then
-                    table.insert(pair, cleaned)
+                    if cleaned ~= "" then
+                        table.insert(pair, cleaned)
+                    end
                 end
+
+                return pair
             end
+        end,
+        dirty
+    )
 
-            table.insert(aliases, pair)
-        end
-    end
-
-    return aliases
+    return ret
 end)()
 
 local alias_width = 0
@@ -68,18 +74,33 @@ for _, alias in ipairs(aliases) do
     end
 end
 
-local user_opts
-local setup = function(opts)
-    opts = opts or {}
-    if opts.theme and opts.theme ~= "" then
-        user_opts = themes["get_" .. opts.theme](opts)
-    else
-        user_opts = opts
-    end
-end
-
+---Main rualdi funciton which lists the aliases and paths
+---@param opts table Options to override the setup function or default
 local function list(opts)
-    opts = vim.tbl_deep_extend("force", user_opts, opts or {})
+    vim.validate {
+        opts = {opts, "table", true}
+    }
+
+    -- Set the configuration theme if it exists
+    local defaults = (function()
+        if config.theme then
+            return require("telescope.themes")["get_" .. config.theme](config)
+        else
+            return vim.deepcopy(config)
+        end
+    end)()
+
+    -- Set the options theme if it exists (since it was applied after the configuration)
+    opts = (function()
+        if opts.theme then
+            return require("telescope.themes")["get_" .. opts.theme](opts)
+        else
+            return vim.deepcopy(opts)
+        end
+    end)()
+
+    -- Extend the default configuration
+    opts = vim.tbl_deep_extend("force", defaults, opts or {})
 
     local displayer =
         entry_display.create {
@@ -92,15 +113,15 @@ local function list(opts)
 
     local make_display = function(entry)
         return displayer {
-            {entry.alias, opts.alias_hl or "Normal"},
-            {entry.path, opts.path_hl or "Comment"}
+            {entry.alias, opts.alias_hl},
+            {entry.path, opts.path_hl}
         }
     end
 
     pickers.new(
         opts,
         {
-            prompt_title = opts.prompt_title or "Rualdi",
+            prompt_title = opts.prompt_title,
             finder = finders.new_table {
                 results = aliases,
                 entry_maker = function(e)
@@ -129,16 +150,11 @@ local function list(opts)
 
                         actions.close(prompt_bufnr)
 
-                        if opts.opener then
-                            if fn.exists((":%s"):format(opts.opener)) then
-                                cmd((":%s %s"):format(opts.opener, selection.path))
-                                cmd("normal A")
-                            end
+                        if fn.exists((":%s"):format(opts.opener)) then
+                            cmd((":%s %s"):format(opts.opener, selection.path))
+                            cmd("normal A")
                         else
-                            if fn.exists(":Lf") then
-                                cmd((":Lfnvim %s"):format(selection.path))
-                                cmd("normal A")
-                            end
+                            vim.notify(("opener %s doesn't exist"):format(opts.opener))
                         end
                     end
                 )
@@ -165,7 +181,7 @@ local function list(opts)
 end
 
 return telescope.register_extension {
-    setup = setup,
+    setup = config.setup,
     exports = {
         list = list
     }
